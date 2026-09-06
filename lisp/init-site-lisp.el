@@ -21,6 +21,11 @@
   (push site-lisp-dir load-path)
   (sanityinc/add-subdirs-to-load-path site-lisp-dir))
 
+;; Also add site-lisp subdirectories to custom-theme-load-path
+(let ((vulkanite-dir (expand-file-name "site-lisp/vulkanite-theme" user-emacs-directory)))
+  (when (file-directory-p vulkanite-dir)
+    (add-to-list 'custom-theme-load-path vulkanite-dir)))
+
 ;;; Utilities for grabbing upstream libs
 
 (defun site-lisp-dir-for (name)
