@@ -4,7 +4,8 @@
 ;;; Code:
 (set-face-attribute 'default nil
                     :family "JetBrainsMono Nerd Font"
-                    :height 120)
+                    ;; :family "Iosevka term"
+                    :height 165)
 ;;; init-local.el --- Nuxt/Vue setup -*- lexical-binding: t -*-
 
 ;;; web-mode: handle .vue single-file components
@@ -32,7 +33,47 @@
   :ensure t
   :commands (lsp lsp-deferred)
   :config
-  (require 'lsp-volar))
+  (require 'lsp-volar)
+
+  ;; Pass --tsdk to volar-language-server so it uses a compatible TypeScript compiler
+  ;; (project-local node_modules/typescript or global TypeScript) rather than failing
+  ;; if a peer dependency installs TypeScript 7+.
+  (defun my/lsp-volar-connection-args ()
+    (let* ((root (lsp-workspace-root))
+           (project-tsdk (when root (expand-file-name "node_modules/typescript/lib" root)))
+           (global-tsdk "/usr/lib/node_modules/typescript/lib")
+           (tsdk (cond
+                  ((and project-tsdk (file-directory-p project-tsdk)) project-tsdk)
+                  ((file-directory-p global-tsdk) global-tsdk)
+                  (t nil))))
+      (if tsdk
+          `(,(lsp-package-path 'volar-language-server) "--stdio" ,(concat "--tsdk=" tsdk))
+        `(,(lsp-package-path 'volar-language-server) "--stdio"))))
+
+  (lsp-register-client
+   (make-lsp-client
+    :new-connection (lsp-stdio-connection #'my/lsp-volar-connection-args)
+    :activation-fn 'lsp-volar--activate-p
+    :priority 0
+    :multi-root nil
+    :add-on? t
+    :server-id 'vue-semantic-server
+    :initialization-options (lambda () (ht-merge (lsp-configuration-section "vue")))
+    :notification-handlers (ht ("tsserver/request" #'lsp-volar--tsserver-request-handler))
+    :initialized-fn (lambda (workspace)
+                      (with-lsp-workspace workspace
+                        (lsp--server-register-capability
+                         (lsp-make-registration
+                          :id "random-id"
+                          :method "workspace/didChangeWatchedFiles"
+                          :register-options? (lsp-make-did-change-watched-files-registration-options
+                                              :watchers
+                                              `[
+                                                 ,(lsp-make-file-system-watcher :glob-pattern "**/*.vue")
+                                                ])))))
+    :download-server-fn (lambda (_client callback error-callback _update?)
+                          (lsp-package-ensure 'volar-language-server
+                                              callback error-callback)))))
 
 (add-hook 'web-mode-hook
           (lambda ()
