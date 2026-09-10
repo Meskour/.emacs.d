@@ -165,14 +165,6 @@
 (my/vulkanite-gruvbox-apply-background)
 ;; ─────────────────────────────────────────────────────────────────────────
 
-;; (use-package gptel
-;;   :ensure t
-;;   :config
-;;   (setq gptel-backend
-;;         (gptel-make-gemini
-;;          "Gemini"
-;;          :stream t)))
-
 (use-package gptel
   :ensure t
   :config
