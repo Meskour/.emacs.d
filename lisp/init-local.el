@@ -4,8 +4,10 @@
 ;;; Code:
 (set-face-attribute 'default nil
                     :family "JetBrainsMono Nerd Font"
-                    ;; :family "Iosevka term"
-                    :height 165)
+                    ;; :family "Iosevka Nerd Font"
+                    ;; :family "Hack"
+                    :height 145)
+
 ;;; init-local.el --- Nuxt/Vue setup -*- lexical-binding: t -*-
 
 ;;; web-mode: handle .vue single-file components
@@ -27,76 +29,88 @@
   :ensure t
   :mode "\\.ts\\'")
 
-;;; lsp-mode: explicit autoload declarations so lsp-deferred exists
-;;; before lsp-mode is actually loaded
-(use-package lsp-mode
-  :ensure t
-  :commands (lsp lsp-deferred)
-  :config
-  (require 'lsp-volar)
+;;; Vue / TypeScript LSP support via Eglot
+(defun my/find-vue-typescript-plugin ()
+  "Find the directory of @vue/typescript-plugin."
+  (let* ((project-root (when (project-current) (project-root (project-current))))
+         (dominating (locate-dominating-file (or (buffer-file-name) default-directory) "node_modules"))
+         (candidates (delq nil
+                           (list (when project-root
+                                   (expand-file-name "node_modules/@vue/typescript-plugin" project-root))
+                                 (when dominating
+                                   (expand-file-name "node_modules/@vue/typescript-plugin" dominating))
+                                 "/usr/lib/node_modules/@vue/typescript-plugin"
+                                 "/usr/local/lib/node_modules/@vue/typescript-plugin"))))
+    (seq-find #'file-directory-p candidates)))
 
-  ;; Pass --tsdk to volar-language-server so it uses a compatible TypeScript compiler
-  ;; (project-local node_modules/typescript or global TypeScript) rather than failing
-  ;; if a peer dependency installs TypeScript 7+.
-  (defun my/lsp-volar-connection-args ()
-    (let* ((root (lsp-workspace-root))
-           (project-tsdk (when root (expand-file-name "node_modules/typescript/lib" root)))
-           (global-tsdk "/usr/lib/node_modules/typescript/lib")
-           (tsdk (cond
-                  ((and project-tsdk (file-directory-p project-tsdk)) project-tsdk)
-                  ((file-directory-p global-tsdk) global-tsdk)
-                  (t nil))))
-      (if tsdk
-          `(,(lsp-package-path 'volar-language-server) "--stdio" ,(concat "--tsdk=" tsdk))
-        `(,(lsp-package-path 'volar-language-server) "--stdio"))))
+(defun my/eglot-vue-contact (&optional _interactive _project)
+  "Return server contact for Vue single-file components using typescript-language-server and @vue/typescript-plugin."
+  (let ((plugin (my/find-vue-typescript-plugin)))
+    (if plugin
+        (list "typescript-language-server" "--stdio"
+              :initializationOptions
+              (list :plugins
+                    (vector
+                     (list :name "@vue/typescript-plugin"
+                           :location plugin
+                           :languages (vector "vue")))))
+      (list "typescript-language-server" "--stdio"))))
 
-  (lsp-register-client
-   (make-lsp-client
-    :new-connection (lsp-stdio-connection #'my/lsp-volar-connection-args)
-    :activation-fn 'lsp-volar--activate-p
-    :priority 0
-    :multi-root nil
-    :add-on? t
-    :server-id 'vue-semantic-server
-    :initialization-options (lambda () (ht-merge (lsp-configuration-section "vue")))
-    :notification-handlers (ht ("tsserver/request" #'lsp-volar--tsserver-request-handler))
-    :initialized-fn (lambda (workspace)
-                      (with-lsp-workspace workspace
-                        (lsp--server-register-capability
-                         (lsp-make-registration
-                          :id "random-id"
-                          :method "workspace/didChangeWatchedFiles"
-                          :register-options? (lsp-make-did-change-watched-files-registration-options
-                                              :watchers
-                                              `[
-                                                 ,(lsp-make-file-system-watcher :glob-pattern "**/*.vue")
-                                                ])))))
-    :download-server-fn (lambda (_client callback error-callback _update?)
-                          (lsp-package-ensure 'volar-language-server
-                                              callback error-callback)))))
+(with-eval-after-load 'eglot
+  (add-to-list 'eglot-server-programs
+               '(((web-mode :language-id "vue")
+                  (vue-mode :language-id "vue")
+                  (vue-ts-mode :language-id "vue"))
+                 . my/eglot-vue-contact)))
 
 (add-hook 'web-mode-hook
           (lambda ()
             (when (string-match-p "\\.vue\\'" (or (buffer-file-name) ""))
-              (lsp-deferred))))
+              (eglot-ensure))))
 
-(add-hook 'typescript-mode-hook #'lsp-deferred)
-(add-hook 'js-mode-hook #'lsp-deferred)
-(add-hook 'js2-mode-hook #'lsp-deferred)
-
-(add-hook 'typescript-ts-mode-hook #'lsp-deferred)
-(add-hook 'tsx-ts-mode-hook #'lsp-deferred)
+(add-hook 'typescript-mode-hook #'eglot-ensure)
+(add-hook 'typescript-ts-mode-hook #'eglot-ensure)
+(add-hook 'tsx-ts-mode-hook #'eglot-ensure)
+(add-hook 'js-mode-hook #'eglot-ensure)
+(add-hook 'js2-mode-hook #'eglot-ensure)
 
 ;;; emmet-mode: fast HTML/template expansion in .vue templates
 (use-package emmet-mode
   :ensure t
   :hook (web-mode . emmet-mode))
 
-;;; prettier support (optional, Nuxt projects almost always use it)
+;;; Add local node_modules/.bin to exec-path (handles modern npm where 'npm bin' was removed)
+(defun my/add-node-modules-bin-to-exec-path ()
+  "Add local node_modules/.bin to buffer-local exec-path and PATH."
+  (when-let* ((start (or (buffer-file-name) default-directory))
+              (root (locate-dominating-file
+                     start
+                     (lambda (d) (file-directory-p (expand-file-name "node_modules/.bin" d))))))
+    (let ((bin (expand-file-name "node_modules/.bin" root)))
+      (make-local-variable 'exec-path)
+      (cl-pushnew bin exec-path :test #'equal)
+      (setenv "PATH" (concat bin path-separator (getenv "PATH"))))))
+
+(dolist (hook '(web-mode-hook
+                typescript-mode-hook
+                typescript-ts-mode-hook
+                tsx-ts-mode-hook
+                js-mode-hook
+                js2-mode-hook))
+  (add-hook hook #'my/add-node-modules-bin-to-exec-path))
+
+;;; prettier support (only format on save if prettier is available)
 (use-package prettier-js
   :ensure t
-  :hook ((web-mode . prettier-js-mode)
-         (typescript-mode . prettier-js-mode)))
+  :hook ((web-mode . my/enable-prettier-if-available)
+         (typescript-mode . my/enable-prettier-if-available)
+         (typescript-ts-mode . my/enable-prettier-if-available)
+         (tsx-ts-mode . my/enable-prettier-if-available))
+  :init
+  (defun my/enable-prettier-if-available ()
+    (my/add-node-modules-bin-to-exec-path)
+    (when (executable-find "prettier")
+      (prettier-js-mode 1))))
 
 (setq major-mode-remap-alist
       '((typescript-mode . typescript-ts-mode)
@@ -133,7 +147,41 @@
 
 ;; After init: watch theme.name so Super+Alt+Space changes auto-sync to Emacs.
 (add-hook 'after-init-hook #'vulkanite-watch-omarchy-theme)
+
+;; Set vulkanite-gruvbox background to #1e1e1e (matching the screenshot)
+(defun my/vulkanite-gruvbox-apply-background (&optional _theme)
+  "Ensure `vulkanite-gruvbox' uses #1e1e1e background when it is the active theme."
+  (when (eq (car custom-enabled-themes) 'vulkanite-gruvbox)
+    (set-face-attribute 'default nil :background "#1e1e1e")))
+
+(add-hook 'enable-theme-functions #'my/vulkanite-gruvbox-apply-background)
+(add-hook 'disable-theme-functions #'my/vulkanite-gruvbox-apply-background)
+(add-hook 'after-make-frame-functions
+          (lambda (frame)
+            (when (eq (car custom-enabled-themes) 'vulkanite-gruvbox)
+              (set-face-attribute 'default frame :background "#1e1e1e"))))
+
+;; Apply immediately if vulkanite-gruvbox is already active
+(my/vulkanite-gruvbox-apply-background)
 ;; ─────────────────────────────────────────────────────────────────────────
+
+;; (use-package gptel
+;;   :ensure t
+;;   :config
+;;   (setq gptel-backend
+;;         (gptel-make-gemini
+;;          "Gemini"
+;;          :stream t)))
+
+(use-package gptel
+  :ensure t
+  :config
+  (setq gptel-model 'gemini-2.5-flash)
+
+  (setq gptel-backend
+        (gptel-make-gemini
+            "Gemini"
+          :stream t)))
 
 (provide 'init-local)
 ;;; init-local.el ends here
