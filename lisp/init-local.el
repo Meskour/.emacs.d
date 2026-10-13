@@ -3,10 +3,10 @@
 ;;; Commentary:
 ;;; Code:
 (set-face-attribute 'default nil
-                    :family "JetBrainsMono Nerd Font"
+                    ;; :family "JetBrainsMono Nerd Font"
                     ;; :family "Iosevka Nerd Font"
                     ;; :family "Hack"
-                    :height 145)
+                    :height 140)
 
 ;;; init-local.el --- Nuxt/Vue setup -*- lexical-binding: t -*-
 
@@ -174,6 +174,9 @@
         (gptel-make-gemini
             "Gemini"
           :stream t)))
+
+(add-to-list 'custom-theme-load-path "~/.emacs.d/themes/")
+(load-theme 'raddebugger t)
 
 (provide 'init-local)
 ;;; init-local.el ends here
